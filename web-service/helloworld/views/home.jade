@@ -1,0 +1,234 @@
+doctype html
+html
+    head
+        title Semantic UI
+        link(rel="stylesheet" type="text/css" href="/stylesheets/semantic.min.css")
+        link(rel="stylesheet" type="text/css" href="/stylesheets/home.css")
+        
+
+        script(src="https://code.jquery.com/jquery-3.1.1.min.js" integrity="sha256-hVVnYaiADRTO2PzUGmuLJr8BLUSjGIZsDYGmIJLv2b8=" crossorigin="anonymous")
+        script(src="/javascripts/semantic.min.js")
+       
+    body
+        div.ui.special.modal
+            i.close.icon 
+            .header.ui.grid
+                .left.floated.content
+                    .h4 Feed_name administrators
+                .right.floated.content
+                    div.ui.fluid.search
+                        div.ui.icon.input
+                            input#searchuser.prompt(type="text" placeholder="username")
+                            i.search.icon
+                        div#searchUserResults.results
+                
+            .content 
+                .ui.relaxed.divided.list
+                            
+
+        div#father-container
+             
+            div.ui.four.column.grid
+
+                div#left-column.three.wide.column
+
+                    h2#feedinfo.ui.center.aligned.dividing.header Feed info
+                                        
+                    div#description.ui.container.segment
+                        h4.ui.center.aligned.dividing.header Description:
+                        div.ui.list    
+                            div.item
+                                div.header #{infoFeed1.Name}
+                                p #{infoFeed1.Description}
+
+                    div#feedfollows.ui.container.segment
+                        h4.ui.center.aligned.dividing.header Feed follows:
+                        
+                        div.ui.list
+                            each source in listFollowedSources
+                                div.item
+                                    div.header #{source.Title}
+                                    p #{source.Description}
+                                    a(id='Source:#{source.id}').ui.label.stopFollowingSource
+                                        i.minus.circle.icon
+                                        | stop following
+                                    
+                    h2.ui.center.aligned.dividing.header Feed tools
+                    
+                    div.ui.container.segment
+                        h4.ui.dividing.header Filters
+
+                        form.ui.form.filter-form
+                            div.ui.field                            
+                                label Add string to black list:
+                                input(type="text" placeholder="[\"Arden las redes\", \"Fichaje bomba\", \"La perla\", \"El milagroso\"]")
+                            button.ui.submit.button(type="submit") Update
+
+                    div.ui.container.segment
+                        h4.ui.dividing.header Your Feeds
+                    
+                        div.ui.list
+                            each myfeed in listMyFeeds
+                                div.item                                       
+                                    div.ui.compact.menu.middle.aligned.right.floated.content
+                                        div(id='Composed:#{myfeed.id}').ui.simple.dropdown.item options
+                                            .menu
+                                                div.editAdminList.item Edit admin list
+                                                div.deleteFeed.item Delete
+                                    div.header #{myfeed.Name}
+                                    p #{myfeed.Description}
+                                    
+                div#mid-container.nine.wide.column
+                    h2#myfeeds.ui.center.aligned.dividing.header My feeds
+
+                    div.ui.equal.width.grid
+
+                        div#feed1.column
+                            
+                            - if( typeof(infoFeed1.Name) === 'undefined' ) 
+                                form.newFeed.ui.form(id="newFeed1" method="post")
+                                    .field 
+                                        label Title
+                                        input(type="Text", name="title", placeholder="Feed title")
+                                    .field 
+                                        label Description
+                                        input(type="Text", name="description", placeholder="Feed description")
+                                    button.ui.submit.button(type="submit") Create Feed
+                                    
+                            - else
+                                div.ui.one.item.menu
+                                    a#btnfeed1.feedbutton.item
+                                        h4#feed1Title.feed1Title.ui.dividing.header #{infoFeed1.Name}
+                                                            
+                                div#f1.ui.feed.myfeed
+                                    each msg in listMsg1
+                                        div.event
+                                            div.ui.fluid.centered.card
+                                                div.content
+                                                    div.summary(id='#{msg[1].id}')
+                                                        a(href="#{msg[1].sourceLink}") #{msg[1].sourceTitle}
+                                                        div.date #{msg[1].date}
+                                                        
+                                                        h3.extra.text #{msg[1].title}
+                        
+                                                        p #{msg[1].description}
+
+                                                        div.meta
+                                                            a.like(href="#{msg[1].link}") Go
+                                                            div.ui.compact.menu
+                                                                div.ui.simple.dropdown.item send
+                                                                    .menu
+                                                                        each myfeed in listMyFeeds
+                                                                            div.item.retweet(id='#{myfeed.id}') #{myfeed.Name}
+                                                            
+
+                        div#feed2.column
+                            - if( typeof(infoFeed2.Name) === 'undefined' ) 
+                                form.newFeed.ui.form(id="newFeed2" method="post")
+                                    .field 
+                                        label Title
+                                        input(type="Text", name="title", placeholder="Feed title")
+                                    .field 
+                                        label Description
+                                        input(type="Text", name="description", placeholder="Feed description")
+                                    button.ui.submit.button(type="submit") Create Feed
+                            - else
+                                div.ui.one.item.menu
+                                    a#btnfeed2.feedbutton.item
+                                        h4#feed2Title.feed2Title.ui.dividing.header #{infoFeed2.Name}
+
+                                div#f2.ui.feed.myfeed
+                                    each msg in listMsg2
+                                        div.event
+                                            div.ui.fluid.centered.card
+                                                div.content
+                                                    div.summary(id='#{msg[1].id}')
+                                                        a(href="#{msg[1].sourceLink}") #{msg[1].sourceTitle}
+                                                        div.date #{msg[1].date}
+                                                        
+                                                        h3.extra.text #{msg[1].title}
+                        
+                                                        p #{msg[1].description}
+
+                                                        div.meta
+                                                            a.like(href="#{msg[1].link}") Go
+                                                            div.ui.compact.menu
+                                                                div.ui.simple.dropdown.item send
+                                                                    .menu
+                                                                        each myfeed in listMyFeeds
+                                                                            div.item.retweet(id='#{myfeed.id}') #{myfeed.Name} 
+                                                                            
+                                                        
+                        div#feed3.column
+                            - if( typeof(infoFeed3.Name) === 'undefined' )
+                                form.newFeed.ui.form(id="newFeed3" method="post")
+                                    .field 
+                                        label Title
+                                        input(type="Text", name="title", placeholder="Feed title")
+                                    .field 
+                                        label Description
+                                        input(type="Text", name="description", placeholder="Feed description")
+                                    button.ui.button(type="submit") Create Feed
+                            - else
+                                div.ui.one.item.menu
+                                    a#btnfeed3.feedbutton.item
+                                        h4#feed3Title.feed3Title.ui.dividing.header #{infoFeed3.Name}
+
+                                div#f3.ui.feed.myfeed
+                                    each msg in listMsg3
+                                        div.event
+                                            div.ui.fluid.centered.card
+                                                div.content
+                                                    div.summary(id='#{msg[1].id}')
+                                                        a(href="#{msg[1].sourceLink}") #{msg[1].sourceTitle}
+                                                        div.date #{msg[1].date}
+                                                        
+                                                        h3.extra.text #{msg[1].title}
+                        
+                                                        p #{msg[1].description}
+
+                                                        div.meta
+                                                            a.like(href="#{msg[1].link}") Go
+                                                            div.ui.compact.menu
+                                                                div.ui.simple.dropdown.item send
+                                                                    .menu
+                                                                        each myfeed in listMyFeeds
+                                                                            div.item.retweet(id='#{myfeed.id}') #{myfeed.Name}
+
+                div#right-column.four.wide.column
+                    
+                    h2#platformtools.ui.center.aligned.dividing.header Platform tools
+                                                   
+                    div.ui.container.segment
+                        h4.ui.dividing.header Register source
+
+                        form.ui.form.filter-form(id="registerSource" method="post")
+                            div.field
+                                label RSS URI:
+                                input(type="url" placeholder="https://www.example.com/rss" name="feed_url" id="source_uri")
+                            button.ui.submit.button(type="submit") Register
+
+                    div.ui.container.segment
+                        h4.ui.dividing.header Create feed
+                        form.newFeed.ui.form(id="newFeed0" method="post")
+                                    .field 
+                                        label Title
+                                        input(type="Text", name="title", placeholder="Feed title")
+                                    .field 
+                                        label Description
+                                        input(type="Text", name="description", placeholder="Feed description")
+                                    button.ui.submit.button(type="submit") Create Feed
+                    
+                    div.ui.container.segment
+                        h4.ui.dividing.header Search Feeds
+                        div#searchcontainer.ui.fluid.search
+                            div.ui.icon.input
+                                input#search.prompt(type="text" placeholder="Title, Description, Link, URI...")
+                                i.search.icon
+                            div#searchResult.results
+
+                    div#selectedItemResultContainer.ui.container.segment
+        
+    script(src="/socket.io/socket.io.js")
+    script(src="/javascripts/feedsUpdate.js")
+    script(src="/javascripts/search.js")

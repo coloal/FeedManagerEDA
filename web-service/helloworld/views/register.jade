@@ -1,0 +1,12 @@
+extends layout
+
+block content
+    h1= title
+    form(name="registerForm", method="POST", action='/users/register')
+        input(type="hidden", name="_method", value="POST")
+        p Name
+        input(type="text", name="username")
+        p Password
+        input(type="text", name="password")
+        p
+        input(type="submit")

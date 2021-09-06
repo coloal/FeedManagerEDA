@@ -1,0 +1,10 @@
+extends layout
+
+block content
+    h1= title
+    form(name="addFeed", method="POST", action='/feeds/addFeed')
+        input(type="hidden", name="_method", value="POST")
+        p FeedID
+        input(type="text", name="feed_id")
+        p
+        input(type="submit")

@@ -1,0 +1,74 @@
+#father-container {
+    background-color: white;
+    padding: 3%;
+}
+
+    .grid {
+        background-color: white;
+    }
+
+    #mid-container {
+        background-color: white;
+        
+    }
+
+    #myfeeds {
+        margin-bottom: 3%;
+    }
+
+    #feedinfo {
+        margin-bottom: 9%;
+    }
+    
+    #platformtools {
+        margin-bottom: 7%;  
+    }
+    /*
+    .myheader {
+        margin-bottom: 3%;
+    }
+    */
+
+            .myfeed {
+                background-color:white;
+                padding: 3%;
+            }
+
+            .newFeed {
+                background-color: rgb(239, 242, 243);;
+                padding: 3%;
+            }
+
+            #feed1 {
+                background-color: white;
+                
+            }
+
+            #feed2 {
+                background-color: white;
+                
+                border-left: solid lightgray;
+                border-right: solid lightgray;
+                border-width: thin;
+            }
+
+            #feed3 {
+                background-color: white;
+                
+            }
+
+            
+
+    #right-column {
+        border-left: solid lightgray;
+        background-color: white;
+    }
+
+        .filter-form{
+            margin-bottom: 3%;
+        }
+
+    #left-column {
+        border-right: solid lightgray;
+        background-color: white;
+    }

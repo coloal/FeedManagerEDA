@@ -1,0 +1,36 @@
+NAME: composed-release
+LAST DEPLOYED: Sun Aug 22 17:36:32 2021
+NAMESPACE: redis
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+Redis(TM) can be accessed via port 6379 on the following DNS names from within your cluster:
+
+composed-release-redis-master.redis.svc.cluster.local for read/write operations
+composed-release-redis-slave.redis.svc.cluster.local for read-only operations
+
+
+To get your password run:
+
+    export COMPOSED_PASSWORD=$(kubectl get secret --namespace redis composed-release-redis -o jsonpath="{.data.redis-password}" | base64 --decode)
+
+To connect to your Redis(TM) server:
+
+1. Run a Redis(TM) pod that you can use as a client:
+   kubectl run --namespace redis composed-release-redis-client --rm --tty -i --restart='Never' \
+    --env COMPOSED_PASSWORD=$COMPOSED_PASSWORD \
+   --image docker.io/coloal/custom_redis:0.99 -- bash
+
+2. Connect using the Redis(TM) CLI:
+   redis-cli -h composed-release-redis-master -a $COMPOSED_PASSWORD
+   redis-cli -h composed-release-redis-slave -a $COMPOSED_PASSWORD
+
+To connect to your database from outside the cluster execute the following commands:
+
+    kubectl port-forward --namespace redis svc/composed-release-redis-master 6379:6379 &
+    redis-cli -h 127.0.0.1 -p 6379 -a $COMPOSED_PASSWORD
+
+
+ft.create composed-index on hash prefix 1 Composed: schema Name text Description text

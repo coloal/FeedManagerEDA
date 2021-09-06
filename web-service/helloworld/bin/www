@@ -1,0 +1,422 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+ var app = require('../app');
+ var debug = require('debug')('helloworld:server');
+ var http = require('http');
+ 
+ /**
+  * Get port from environment and store in Express.
+  */
+ 
+ var port = normalizePort(process.env.PORT || '3000');
+ app.set('port', port);
+ 
+ /**
+  * Create HTTP server.
+  */
+ 
+ 
+ 
+ var server = http.createServer(app);
+ 
+ //New for socket.io
+ var moment = require('moment');
+ const { Server } = require("socket.io");
+ const io = new Server(server);
+ 
+ var redis = require('redis');
+
+ console.log("La contraseña de SOURCE= " + process.env.SOURCE_PASSWORD)
+ console.log("La contraseña de COMPOSED= " + process.env.COMPOSED_PASSWORD)
+ // var redis_client = redis.createClient({port: 6379, host: "127.0.0.1", password: process.env.COMPOSED_PASSWORD});
+ var redis_client = redis.createClient({port: 6379, host: "composed-release-redis-master.redis.svc.cluster.local", password: process.env.COMPOSED_PASSWORD});
+ var jade = require('jade');
+
+ var User = require('../models/user');
+ const { type } = require('os');
+ const { DelAdmin, AddAdmin, AddSource, CreateComposed, FollowSource, UnfollowSource } = require('../controllers/feedController');
+ const { getMessage, getComposed, getSource, getLastTenMessages, getLastTenSourceMessages, getFollowingInfos, getComposedInfo, getAdminsList } = require('../models/feed');
+ const { KafkaJSMetadataNotLoaded } = require('kafkajs');
+
+ const homeDir = __dirname.substring(0,__dirname.length - 3);
+
+ io.of("/feeds").on('connection', function (socket) {
+   console.log("connected to /feeds");
+ 
+   socket.on('join', (userToken) => {
+ 
+     User.findByToken(userToken, (err, user) => {
+       if (err) throw err;
+       if (!user) {
+        console.log('User does not exist!');
+        return;
+       } 
+       
+        for (let i = 1; i <= 3; i++) {
+          switch(i) {
+          case 1:
+            feedId = "composed" + user.feed1;
+            break;
+          case 2:
+            feedId = "composed" + user.feed2;
+            break;
+          case 3:
+            feedId = "composed" + user.feed3;
+            break;
+          default:
+            break;
+          }
+
+          if(feedId != null && feedId !== 'composed'){
+            socket.join(feedId);
+            console.log("Room a la que me he unido: " + feedId);
+          }
+        }
+             
+     });
+
+   });
+
+   socket.on('CreateFeed', (feedId, title, description, tkn) => {
+    console.log('***************Event CreateFeed recieved!: ' + feedId + " - " + title + " - " + description + " - " + tkn);
+    CreateComposed(feedId, title, description, tkn);
+    socket.emit("FeedCreated", feedId);
+    //Llamar a StartHomeFeeds que detectará el nuevo feed y ya lo pintará 
+  });
+
+  socket.on('addSource2Composed', (source_id, composed_id) => {
+    console.log('***************Event AddSource2Composed recieved!: ' + source_id + ' ** ' + composed_id);
+    source_id = source_id.substring(7, source_id.length);
+    composed_id = composed_id.substring(9, composed_id.length);
+    
+    // console.log('SOURCE ID: ' + source_id);
+    // console.log('COMPOSED ID: ' + composed_id);
+    FollowSource(composed_id, source_id);
+  });
+
+  socket.on('stopFollowingSource', (composed_id, source_id) => {
+    
+    source_id = source_id.substring(7, source_id.length);
+    console.log('***************Event stopFollowingSource recieved!: ' + source_id + ' ** ' + composed_id);
+    UnfollowSource(composed_id, source_id);
+
+  })
+
+  socket.on('RegisterSource', (source_uri) => {
+    console.log('***************Event RegisterSource recieved!: ' + source_uri);
+    AddSource(source_uri);
+  });
+
+  socket.on('Search', async (search_text) => {
+    
+    //console.log("++++++++++++++++EL TEXTO INTRODUCIDO EN LA BÚSQUEDA: " + search_text);
+    search_result_composed = await getComposed(search_text);
+    search_result_source = await getSource(search_text);
+    
+    //console.log("++++++++++++++++SEARCH RESULT: \n" + search_result_composed);
+  
+    //console.log("++++++++++++++++SEARCH RESULT: \n" + search_result_source);
+
+    socket.emit("search result", search_result_composed, search_result_source);
+    //socket.emit("search result", search_result_source);
+  });
+
+  socket.on('selected source result', async (id, source_title, source_description, f1, f2, f3, id_f1, id_f2, id_f3) => {
+    console.log("Qué estoy recibiendo? " + source_title);
+    console.log("ID DE SOURCE = " + id);
+    sourceId = id.substring(7, id.length);
+    // console.log("*********************************************************************************************************")
+    // console.log("ID="+sourceId);
+    var sourceFeed = await getLastTenSourceMessages(sourceId);
+    console.log("Size of sourceFeed result =" + sourceFeed.length);
+    for (let i = 0; i < sourceFeed.length; i++)
+    {
+      /*
+      console.log("Item: " + sourceFeed[i][1]);
+      console.log("Timestamp: " + sourceFeed[i][1].date);
+      console.log("Tipo " + typeof(sourceFeed[i][1].date));
+      */
+
+      date = new Date( parseInt(sourceFeed[i][1].date, 10));
+      
+      /*
+      console.log("Titulo: " + sourceFeed[i][1].title);
+      console.log("Date: " + date);
+      console.log("Time ago: " + moment(date).fromNow());
+      */
+      
+      sourceFeed[i][1].date = moment(date).fromNow();
+    }
+      
+    //console.log("DIRNAME==== " + homeDir);
+    console.log("Tamano= " + sourceFeed.length);
+    var functionJadeView = jade.compileFile(homeDir + 'views/searchSourceSelection.jade');
+    console.log("La descripción: " + source_description);
+
+    //***********Aquí los feeds que hay que meter son los que tienen al usuario como propietario no los tres que tiene abiertos :((((
+    var html = functionJadeView({feedMsgs: sourceFeed, sourceTitle: source_title, sourceDescription: source_description, 
+      feed1: f1, feed2: f2, feed3: f3, id_feed1: id_f1, id_feed2: id_f2, id_feed3: id_f3});
+    //console.log(htmlSearchFeed);
+    socket.emit('selected search item result', html);
+  });
+
+  socket.on('selected composed result', async (composed_id, composed_title, composed_description, f1, f2, f3, id_f1, id_f2, id_f3) => {
+    console.log("(selected composed result) id: " + composed_id);
+    //composed_id = id.substring(10);
+    var composedFeed = await getLastTenMessages(composed_id);
+    // console.log("Number of messages returned: " + composedFeed.length);
+    //for (let i = 0; i < composedFeed.length; i++)
+    //  console.log(composedFeed[i]);
+    var functionJadeView = jade.compileFile(homeDir + 'views/searchComposedSelection.jade');
+    var html = functionJadeView({feedMsgs: composedFeed, composedTitle: composed_title, composedDescription: composed_description,
+      feed1: f1, feed2: f2, feed3: f3, id_feed1: id_f1, id_feed2: id_f2, id_feed3: id_f3});
+    //console.log(htmlSearchFeed);
+    console.log("(selected composed result) id: " + composed_id);
+    socket.emit('selected search item result', html, composed_id);
+
+  });
+
+  socket.on('selected feed', async (id) => {
+    console.log('selected feed con id='+id);
+    
+    feedInfo = await getComposedInfo(id)
+    followedSources = await getFollowingInfos(id)
+
+    /*
+    console.log("Name: " + feedInfo.Name);
+    console.log("Description: " + feedInfo.Description);
+    console.log("Length followers: " + followedSources.length); 
+    */
+   
+    var feedInfoView = jade.compileFile(homeDir + 'views/feedInfo.jade');
+    var html = feedInfoView({infoFeed: feedInfo, listFollowedSources: followedSources});
+    //console.log("El HTML: \n" + html);
+    socket.emit('answer selected feed', html);
+  });
+
+  socket.on('change viewport feed', (userToken, composed_id, ifeed) =>
+  {
+    console.log('---------- change viewport feed serveside:' + composed_id + '----------');
+    
+    User.findByToken(userToken, (err, user) => {
+      if (err) throw err;
+      if (!user) {
+       console.log('User does not exist!');
+       return;
+      } 
+
+      switch(ifeed){
+        case 1:
+           console.log('Entra en 1 con composed_id='+composed_id);
+           user.feed1 = composed_id;
+           break;
+        case 2:
+           console.log('Entra en 2 con composed_id='+composed_id);
+           user.feed2 = composed_id;
+           break;
+        case 3:
+           console.log('Entra en 3 con composed_id='+composed_id);
+           user.feed3 = composed_id;
+           break;
+        default:
+           console.log('default case used');
+           break;
+      }
+
+      user.save(function(err, user) {
+        if (err) return console.error(err);
+        console.log("User feed viewports updated succussfully!");
+        socket.emit("user feed viewport updated");
+      });
+    });
+
+  });
+
+  socket.on('request composed admin list', async (composed_id) => {
+    
+    composed_id = composed_id.substring(9);
+    console.log("Me llega, me llega. " + composed_id);
+
+    listAdmins = await getAdminsList(composed_id);
+
+    var modal_admin_view = jade.compileFile(homeDir + 'views/modalAdminList.jade');
+    var html = modal_admin_view({listOfAdmins: listAdmins});
+
+    // console.log('html code: ' + html);
+    
+    socket.emit('response composed admin list', html);
+  });
+
+  socket.on('request delete admin', async (username, composed_id, auth_tkn) => {
+    console.log('Server recieve username: ' + username);
+
+    User.findByToken(auth_tkn, (err, user) => {
+      if (err) throw err;
+      if (!user) {
+       console.log('User does not exist!');
+       return;
+      } 
+
+      console.log("Username = " + user.username)
+      console.log("Lista de feeds propietarios = " + user.myfeeds);
+      console.log("Composed_id recibido = " + composed_id.substring(9, composed_id.length));
+      if(composed_id.substring(9, composed_id.length) in user.myfeeds)
+        DelAdmin(username, composed_id.substring(9, composed_id.length));
+      else
+        console.log('Este feed no pertenece al usuario');
+    });
+
+  });
+
+
+  socket.on('Search user', async(input_text) => {
+    console.log('Event recieved! ' + input_text);
+
+    search_text = input_text.replace(/([^a-z0-9]+)/gi, '');
+    console.log("Search text: " + search_text);
+    User.find({'username': {'$regex': search_text +  '.*'}}
+    ).exec(function(err, list_users) {
+      if (err) console.log(error);
+      if (list_users.length < 1) {
+       console.log('No users with that name');
+       console.log('Users = = = + ' + list_users);
+      } 
+
+      
+      // console.log("Hace cosistas!");
+      
+      for (let i = 0; i < list_users.length; i++) {
+        const username = list_users[i].username;
+        console.log('username: ' + username);
+      }
+  
+
+      var searchUserResult = jade.compileFile(homeDir + 'views/searchUserResult.jade');
+      var arrUserShown = list_users.slice(0,5);
+      var html = searchUserResult({arrUsers: arrUserShown});
+
+      socket.emit('result user search', html);
+      // console.log(html);
+    });
+  });
+
+  socket.on('add user to feed admins', (username, composed_id, auth_tkn) => {
+    console.log('Server recieve username: ' + username);
+
+    User.findByToken(auth_tkn, (err, user) => {
+      if (err) throw err;
+      if (!user) {
+       console.log('User does not exist!');
+       return;
+      } 
+
+      console.log("Username = " + user.username)
+      console.log("Lista de feeds propietarios = " + user.myfeeds);
+      console.log("Composed_id recibido = " + composed_id.substring(9, composed_id.length));
+      if(composed_id.substring(9, composed_id.length) in user.myfeeds)
+        AddAdmin(username, composed_id.substring(9, composed_id.length));
+      else
+        console.log('Este feed no pertenece al usuario');
+    });
+
+  });
+  
+
+  socket.on('disconnect', () => {
+    console.log('socket disconnected and leaves all rooms automatically');
+  });
+
+ });
+
+ redis_client.on('message', async function(chan, msg) {
+   const composed_item = msg.split(':');
+   const room = "composed" + composed_item[0];
+   console.log("--- room = " + room);
+   console.log("redis subscription reacts, message -> " + "item " + composed_item[1] + " published in composed " + composed_item[0]);
+
+   message = await getMessage(composed_item[1]);
+   message.date = moment(new Date( parseInt(message.date, 10))).fromNow();
+   var newMessage = jade.compileFile(homeDir + 'views/newMessage.jade');
+   var html = newMessage({msg: message});
+
+   console.log("+++ room = " + room);
+   console.log("emit feed message with feed_id= " + composed_item[0]);
+
+   io.of("/feeds").to(room).emit("feed message", html, composed_item[0]);
+ });
+ 
+ redis_client.subscribe('composedchannel');
+
+ //End of new
+ 
+ /**
+  * Listen on provided port, on all network interfaces.
+  */
+ 
+ server.listen(port);
+ server.on('error', onError);
+ server.on('listening', onListening);
+ 
+ /**
+  * Normalize a port into a number, string, or false.
+  */
+ 
+ function normalizePort(val) {
+   var port = parseInt(val, 10);
+ 
+   if (isNaN(port)) {
+     // named pipe
+     return val;
+   }
+ 
+   if (port >= 0) {
+     // port number
+     return port;
+   }
+ 
+   return false;
+ }
+ 
+ /**
+  * Event listener for HTTP server "error" event.
+  */
+ 
+ function onError(error) {
+   if (error.syscall !== 'listen') {
+     throw error;
+   }
+ 
+   var bind = typeof port === 'string'
+     ? 'Pipe ' + port
+     : 'Port ' + port;
+ 
+   // handle specific listen errors with friendly messages
+   switch (error.code) {
+     case 'EACCES':
+       console.error(bind + ' requires elevated privileges');
+       process.exit(1);
+       break;
+     case 'EADDRINUSE':
+       console.error(bind + ' is already in use');
+       process.exit(1);
+       break;
+     default:
+       throw error;
+   }
+ }
+ 
+ /**
+  * Event listener for HTTP server "listening" event.
+  */
+ 
+ function onListening() {
+   var addr = server.address();
+   var bind = typeof addr === 'string'
+     ? 'pipe ' + addr
+     : 'port ' + addr.port;
+   debug('Listening on ' + bind);
+ }

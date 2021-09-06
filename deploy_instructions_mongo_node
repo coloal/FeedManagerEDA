@@ -1,0 +1,90 @@
+1.
+	kubectl create namespace mongodb
+
+2.
+	helm repo add bitnami https://charts.bitnami.com/bitnami
+	helm install mongodb bitnami/mongodb --set mongodbRootPassword=root --set mongodbUsername=coloalapp --set mongodbPassword=passapp --set mongodbDatabase=users --set replicaSet.enabled=true -n mongodb
+
+	OUTPUT:
+
+	NAME: mongodb
+	LAST DEPLOYED: Fri Sep  3 15:59:38 2021
+	NAMESPACE: mongodb
+	STATUS: deployed
+	REVISION: 1
+	TEST SUITE: None
+	NOTES:
+	** Please be patient while the chart is being deployed **
+
+	MongoDB(R) can be accessed on the following DNS name(s) and ports from within your cluster:
+
+	    mongodb.mongodb.svc.cluster.local
+
+	To get the root password run:
+
+	    export MONGODB_ROOT_PASSWORD=$(kubectl get secret --namespace mongodb mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 --decode)
+
+	To connect to your database, create a MongoDB(R) client container:
+
+	    kubectl run --namespace mongodb mongodb-client --rm --tty -i --restart='Never' --env="MONGODB_ROOT_PASSWORD=$MONGODB_ROOT_PASSWORD" --image docker.io/bitnami/mongodb:4.4.4-debian-10-r0 --command -- bash
+
+	Then, run the following command:
+	    mongo admin --host "mongodb" --authenticationDatabase admin -u root -p $MONGODB_ROOT_PASSWORD
+
+	To connect to your database from outside the cluster execute the following commands:
+
+	    kubectl port-forward --namespace mongodb svc/mongodb 27017:27017 &
+	    mongo --host 127.0.0.1 --authenticationDatabase admin -p $MONGODB_ROOT_PASSWORD
+
+
+3.1
+	sed -i "s?CHANGE_ME_FOR_SOURCE_PASSWORD?$SOURCE_PASSWORD?" Dockerfile
+	sed -i "s?CHANGE_ME_FOR_COMPOSED_PASSWORD?$COMPOSED_PASSWORD?" Dockerfile
+3.2
+	docker build -t coloal/webapp:1.0 .
+
+4.
+	 docker push coloal/webapp:1.0
+
+5. Obtener IP mongo
+	kubectl get svc -n mongodb | grep mongodb
+
+6.
+   kubectl create secret generic my-mongodb --from-literal=host=10.98.67.224 --from-literal=username=coloalapp --from-literal=password=passapp --from-literal=database=users --from-literal=port=27017 -n mongodb
+
+7.
+	helm install node bitnami/node \
+  --set image.repository=coloal/webapp \
+  --set image.tag=1.0 \
+  --set getAppFromExternalRepository=false \
+  --set mongodb.install=false \
+  --set externaldb.secretName=my-mongodb \
+  --set service.type=NodePort \
+  -n mongodb
+
+8.
+
+	1. Get the URL of your Node app  by running:
+
+	  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+	        Watch the status with: 'kubectl get svc -w node --namespace mongodb'
+
+	  export SERVICE_IP=$(kubectl get svc --namespace mongodb node --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+	  echo "Node app URL: http://$SERVICE_IP/"
+
+
+"start": "node ./bin/www",
+
+
+NAME: node
+LAST DEPLOYED: Fri Sep  3 17:45:10 2021
+NAMESPACE: mongodb
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+1. Get the URL of your Node app  by running:
+
+  export NODE_PORT=$(kubectl get --namespace mongodb -o jsonpath="{.spec.ports[0].nodePort}" services node)
+  export NODE_IP=$(kubectl get nodes --namespace mongodb -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "Node app URL: http://$NODE_IP:$NODE_PORT/"

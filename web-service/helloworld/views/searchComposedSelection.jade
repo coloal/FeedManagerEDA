@@ -1,0 +1,20 @@
+div#s1.ui.feed
+    div.ui.compact.menu
+        div#changeFeedView.ui.simple.dropdown.item Change for feed
+            .menu
+                div.item.viewFeed(id='composed1') #{feed1} 
+                div.item.viewFeed(id='composed2') #{feed2}
+                div.item.viewFeed(id='composed3') #{feed3}
+    h2#headerSearch.ui.center.aligned.dividing.header #{composedTitle}
+    h5#descripSearch.ui.center.aligned.header #{composedDescription}
+    each msg in feedMsgs
+        div.event
+            div.ui.fluid.centered.card
+                div.content
+                    div.summary
+                        div.date #{msg[1].date} 
+                    h3.extra.text #{msg[1].title}
+                    div !{msg[1].description}
+
+                    div.meta
+                        a.like(href="#{msg[1].link}") Ir

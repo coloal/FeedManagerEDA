@@ -1,0 +1,18 @@
+div.event
+    div.ui.fluid.centered.card
+        div.content
+            div.summary(id='#{msg.id}')
+                div.date #{msg.date}
+                
+                h3.extra.text #{msg.title}
+
+                p #{msg.description}
+
+                div.meta
+                    a.like(href="#{msg.link}") Ir
+                    div.ui.compact.menu
+                        div.ui.simple.dropdown.item send
+                            .menu
+                                div.item.retweet
+                                div.item.retweet
+                                div.item.retweet

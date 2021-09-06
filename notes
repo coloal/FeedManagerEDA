@@ -1,0 +1,420 @@
+-----------------------------Attaching my cmd to my Azure resources------------------------
+#This section only has to be done once, or more if you are logged out or you changed to another resource group and want to comeback to Feeds. To see more in logging: https://docs.microsoft.com/en-us/cli/azure/authenticate-azure-cli?view=azure-cli-latest
+
+#To login interactively via browser
+az login
+
+#To attach kubectl to the resource group
+az aks get-credentials --resource-group TFG --name KafkaCluster --subscription 97f64c6f-94ec-420c-b3f4-6fca2b4a3d6f
+
+----------------------------- Attaching my minikube to kubectl ------------------------
+minikube start
+
+-----------------------------Kafka cluster operator deployment, and Kafka and Kafka Connect cluster deployment---------------------------------------------------------------------
+
+#Add repo to helm
+helm repo add strimzi https://strimzi.io/charts/
+
+#Install strimzi operator using helm
+helm install strimzi-kafka strimzi/strimzi-kafka-operator
+
+#Create namespaces kafka-cluster and kafka-connnect
+kubectl apply -f resourceDefinitions/namespaces/kafka-connect.yaml
+kubectl apply -f resourceDefinitions/namespaces/kafka-cluster.yaml
+
+#Upgrade the strimzi operator to watch other namespaces apart from the one it was installed in
+helm upgrade strimzi-kafka strimzi/strimzi-kafka-operator --set watchNamespaces="{default,kafka-cluster,kafka-connect}"
+
+#Create Kafka resource in kafka-cluster namespace
+kubectl apply -f resourceDefinitions/kafka-relateds/kafka.yaml -n kafka-cluster
+
+#Before creating kafka connect cluster create topic connect-cluster-offsets as compacted
+kubectl apply -f connect-cluster-offsets-topic.yaml -n kafka-cluster
+
+#Before pulling the custom Kafka image for KafkaConnect we must create a Secret so we can login to pull the image from our private repo in dockerhub
+kubectl create secret generic regcred     --from-file=.dockerconfigjson=/home/alberto/.docker/config.json     --type=kubernetes.io/dockerconfigjson -n kafka-connect
+
+#Create KafkaConnect resource in kafka-connect namespace
+kubectl apply -f resourceDefinitions/kafka-relateds/kafkaConnect.yaml -n kafka-connect
+
+#Create KafkaConnector resource in kafka-connect namespace
+kubectl apply -f resourceDefinitions/kafka-relateds/kafkaRSSConnector.yaml -n kafka-connect
+
+
+-----------------------------Helm utilities----------------------------------------
+#Fetch the manifests kubernetes is using to create its resources for the release of strimzi chart:
+helm get manifest strimzi-kafka
+
+-----------------------------Kubectl utilities-------------------------------------
+#Open bash on kafka-cluster pod
+kubectl exec --stdin --tty my-kafka-cluster-kafka-0 -n kafka-cluster  -- /bin/bash
+
+#List topics in kafka cluster from the bash created previously
+bin/kafka-topics.sh --list --bootstrap-server my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092
+
+bin/kafka-topics.sh --list --bootstrap-server localhost:9092
+
+#Read topic "rss-topic"
+bin/kafka-console-consumer.sh --topic rss-topic --from-beginning --bootstrap-server my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092
+
+bin/kafka-console-consumer.sh --topic source-actions-topic --from-beginning --bootstrap-server localhost:9092
+
+#Get log from kafka-connect cluster
+kubectl logs pod/my-connect-cluster-connect-866b79675d-4p5dm -n kafka-connect
+
+#Get topic description
+bin/kafka-topics.sh  --bootstrap-server my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092 --describe --topic rss-topic
+
+#Create a topic
+bin/kafka-topics.sh --create --topic rss-topic --bootstrap-server my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092
+
+bin/kafka-topics.sh --create --topic rss-topic --bootstrap-server localhost:9092
+
+
+#Delete topic
+bin/kafka-topics.sh --bootstrap-server my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092 --delete --topic rss-topic
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic rss-topic
+
+#DNS utils
+kubectl exec -i -t dnsutil -n kafka-connect -- nslookup kubernetes.kafka-connect
+
+#GET 
+kubectl exec -it pod/connector-manager -n kafka-connect -- 
+curl -X POST 
+	 -H "Content-Type: application/json"
+	 --data '{
+	 "name": "elpais-rss-connector",
+	 "config": {
+	 	"connector.class": "org.kaliy.kafka.connect.rss.RssSourceConnector",
+	 	"tasks.max": "1",
+	 	"rss.urls": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada",
+	 	"topic": "elpais-rss-topic"
+	 }
+	 }'
+	 http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "rss-connector-example", "config": { "connector.class": "org.kaliy.kafka.connect.rss.RssSourceConnector", "tasks.max": "1", "rss.urls": "https://www.feedforall.com/sample.xml", "topic": "rss-topic" }}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X GET -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/
+
+
+#GET port of the external bootstrap service
+kubectl get service my-kafka-cluster-kafka-external-bootstrap -n kafka-cluster -o=jsonpath='{.spec.ports[0].nodePort}{"\n"}'
+
+#GET IP of the Minikube node(also can be got with: "minikube ip")
+kubectl get nodes --output=jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
+
+
+
+------------------------Custom connector development------------------------------
+#Command to create my connector jar with dependencies
+mvn package assembly:single
+
+#Create new docker image and push it to dockerhub repo
+docker build . -t coloal/custom_strimzi:kafkaconnect-customrssconnector-0
+docker push coloal/custom_strimzi:kafkaconnect-customrssconnector-0
+
+#Post connector
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "rss-connector-custom", "config": { "connector.class": "SourceRssConnector", "tasks.max": "1", "rss-urls": "https://www.feedforall.com/sample.xml", "topic": "rss-topic2" }}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+#To use local images in a kubernetes minikube enviroment first change to minikube enviroment so the built images are built in this context, and therefore exist for kubernetes to be able to pull them when necessary
+
+eval $(minikube docker-env)
+
+docker build . -t coloal/custom_strimzi:kafkaconnect-customrssconnector-0
+
+#At this step u can use the local image "coloal/custom_strimzi:kafkaconnect-customrssconnector-0", and it can be pushed later so in case it does not exist in this docker enviroment it would be pull from dockerhub.
+
+#Where is my connector
+kubectl exec -it pod/my-connect-cluster-connect-5f9c46ff8f-s7qt7 -n kafka-connect -- ls /opt/kafka/plugins/my-rss-connector
+
+#Script to execute when changing connector implementation.
+
+#1. Rebuild jar-with-dependencies
+mvn package assembly:single
+
+#2. Delete old .jar in container
+kubectl exec pod/my-connect-cluster-connect-fd69c4d87-ljnnt -n kafka-connect -- rm /opt/kafka/plugins/my-rss-connector/rss-0.1-jar-with-dependencies.jar
+
+#3. Copy new .jar in container
+kubectl cp rss-0.1-jar-with-dependencies.jar my-connect-cluster-connect-fd69c4d87-ljnnt:/opt/kafka/plugins/my-rss-connector/ -n kafka-connect
+
+#4. Delete old connector
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-connector-custom
+
+#5. Create new one
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "rss-connector-custom", "config": { "connector.class": "SourceRssConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "value.converter": "org.apache.kafka.connect.json.JsonConverter", "rss-urls": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada, https://www.theguardian.com/world/rss", "topic": "rss-source-topic" }}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-connector-custom/restart
+
+#6. Get logs
+kubectl logs pod/my-connect-cluster-connect-fd69c4d87-ljnnt -n kafka-connect
+
+#CHANGE CONNECTOR CONFIGURATION
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X PUT -H "Content-Type: application/json" --data '{ "connector.class": "SourceRssConnector", "tasks.max": "2", "rss-urls": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada, https://www.theguardian.com/world/rss", "topic": "rss-topic" }' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-connector-custom/config
+
+PUT /connectors/hdfs-sink-connector/config HTTP/1.1
+Host: connect.example.com
+Accept: application/json
+
+{
+    "connector.class": "io.confluent.connect.hdfs.HdfsSinkConnector",
+    "tasks.max": "10",
+    "topics": "test-topic",
+    "hdfs.url": "hdfs://fakehost:9000",
+    "hadoop.conf.dir": "/opt/hadoop/conf",
+    "hadoop.home": "/opt/hadoop",
+    "flush.size": "100",
+    "rotate.interval.ms": "1000"
+}
+
+GET access IP:PORT from outside minikube
+
+kubectl exec my-kafka-cluster-kafka-0 -n kafka-cluster -c kafka -it -- cat /tmp/strimzi.properties | grep advertised
+
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-feed-builder", "config": { "connector.class": "RedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "value.converter": "org.apache.kafka.connect.json.JsonConverter", "topics": "rss-topic"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-feed-builder
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X GET -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-feed-builder
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-feed-builder/restart
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -Ss http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/admin/loggers | jq
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-feed-builder", "config": { "connector.class": "RedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "topics": "rss-topic", "redis-connection": "redis-release-master.redis.svc.cluster.local", "redis-password": "pUO893PgGX"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+redis-release-master.redis.svc.cluster.local
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X PUT -H "Content-Type: application/json" --data '{ "connector.class": "RedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "topics": "rss-topic3", "redis-connection": "redis-release-master.redis.svc.cluster.local", "redis-password": "pUO893PgGX" }' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-feed-builder/config
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-feed-builder", "config": { "connector.class": "RedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "topics": "rss-topic4", "redis-connection": "redis-release-master.redis.svc.cluster.local", "redis-password": "pUO893PgGX"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "rss-connector-custom", "config": { "connector.class": "SourceRssConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "value.converter": "org.apache.kafka.connect.json.JsonConverter", "rss-urls": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada, https://www.theguardian.com/world/zimbabwe/rss", "topic": "rss-topic4" }}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-feed-builder", "config": { "connector.class": "SourceRedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "topics": "rss-source-topic", "redis-connection": "redis-release-master.redis.svc.cluster.local", "redis-password": "pUO893PgGX"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-composedfeed-builder1", "config": { "connector.class": "ComposedSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": false, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": false, "topics": "result-item2source-topic", "redis-connection": "composed-release-redis-master.redis.svc.cluster.local", "redis-password": "0nSIVQ9EMZ"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-composed-actions
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X GET -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-composed-actions", "config": { "connector.class": "ActionsComposedRedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": false, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": false, "topics": "composed-followers-topic", "composed-redis-connection": "composed-release-redis-master.redis.svc.cluster.local", "composed-redis-password": "0nSIVQ9EMZ", "source-redis-connection": "redis-release-master.redis.svc.cluster.local", "source-redis-password": "pUO893PgGX"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X PUT -H "Content-Type: application/json" --data '{ "name":"rss-connector-custom", "connector.class": "SourceRssConnector", "tasks.max": "2", "rss-urls": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada, https://www.theguardian.com/world/rss"}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-connector-custom/config
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-source-actions", "config": { "connector.class": "ActionsSourceRedisSinkConnector", "tasks.max": "4","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": false, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": false, "topics": "source-actions-topic", "source-redis-connection": "redis-release-master.redis.svc.cluster.local", "source-redis-password": "pUO893PgGX", "nMapSources":"4"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-source-actions
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "rss-source-connector", "config": { "connector.class": "SourceRssConnector", "tasks.max": "3","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": true, "topic": "rss-source-topic2", "offsets-topic": "offsets-topic",  "kafka-bootstrap": "my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-source-connector
+
+
+bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --alter --add-config cleanup.policy=compact,delete.retention.ms=1000,segment.ms=1000,min.cleanable.dirty.ratio=0.01 - --entity-name connect-cluster-offsets
+
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --topic connect-cluster-offsets --alter --partitions 4
+
+bin/kafka-console-consumer.sh --topic connect-cluster-offsets --from-beginning --bootstrap-server localhost:9092
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic compacted-topic  --partitions 4  --replication-factor 1 --config "cleanup.policy=compact" --config "delete.retention.ms=100"  --config "segment.ms=100" --config "min.cleanable.dirty.ratio=0.01"
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic compacted-topic
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic compacted-topic  --partitions 4  --replication-factor 1 --config "cleanup.policy=compact" --config "delete.retention.ms=100"  --config "segment.ms=100" --config "min.cleanable.dirty.ratio=0"
+
+
+bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --alter --add-config cleanup.policy=compact,delete.retention.ms=1000,segment.ms=1000,min.cleanable.dirty.ratio=0 - --entity-name compacted-topic
+
+bin/kafka-topics.sh  --bootstrap-server localhost:9092 --describe --topic compacted-topic
+
+Crear el topic de offsets:
+bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --alter --add-config cleanup.policy=compact,delete.retention.ms=1000,segment.ms=1000,min.cleanable.dirty.ratio=0 - --entity-name connect-cluster-offsets
+
+-------------------------------------------------------------------------
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic connect-cluster-offsets
+bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --alter  --add-config cleanup.policy=compact,delete.retention.ms=1000,segment.ms=1000,min.cleanable.dirty.ratio=0 - --entity-name connect-cluster-offsets
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --alter --topic connect-cluster-offsets --partitions 4
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic compac  --partitions 1  --replication-factor 1 --config "cleanup.policy=compact" --config "delete.retention.ms=1000"  --config "segment.ms=1000" --config "min.cleanable.dirty.ratio=0"
+
+bin/kafka-topics.sh  --bootstrap-server localhost:9092 --describe --topic offsets-topic
+
+bin/kafka-console-consumer.sh --topic offsets-topic --from-beginning --bootstrap-server localhost:9092 --property print.key=true
+
+bin/kafka-topics.sh --list --bootstrap-server localhost:9092
+
+-------------------------------------------------------------------------
+
+helm install node bitnami/node -n node-server \
+  --set image.repository=coloal/website_server \
+  --set image.tag=1.0 \
+  --set getAppFromExternalRepository=false \
+  --set mongodb.install=false \
+  --set service.type=LoadBalancer
+
+helm install node bitnami/node -n node-server \
+  --set image.repository=coloal/website_server \
+  --set image.tag=1.0 \
+  --set getAppFromExternalRepository=false \
+  --set mongodb.install=false \
+  --set service.type=LoadBalancer
+
+
+ The service.type=LoadBalancer parameter makes the application available at a public IP address.
+The getAppFromExternalRepository=false parameter controls whether the chart will retrieve the application from an external repository. In this case, since the application is already published as a container image, such retrieval is not necessary.
+The image.repository and image.tag parameters tell the chart which container image and version to pull from the registry. The values assigned to these parameters should match the image published in Step 3.
+
+NOTES:
+1. Get the URL of your Node app  by running:
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        Watch the status with: 'kubectl get svc -w node --namespace node-server'
+
+  export SERVICE_IP=$(kubectl get svc --namespace node-server node --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+  echo "Node app URL: http://$SERVICE_IP/"
+
+
+http://my-kafka-cluster-kafka-external-bootstrap.kafka-cluster.svc:30160
+
+
+curl -XPOST \
+    -H "Content-Type: application/json" \
+    -H "x-npm-signature: sha256=sha256=e7b1c7a7eef2a64d99771235b59259ce18ce4283e54bc5988ef10adc970812d5" \
+    -d '{"event":"package:publish","payload":{"name":"@kafkajs/zstd"},"time":1603444214995}' \
+    http://localhost:3000/hook
+
+{"event":"package:publish","payload":{"name":"@kafkajs/zstd"},"time":1603444214995}
+
+node sendEvent http://localhost:3000/hook secret-badly-included-in-code ./payload.json
+
+
+#Start Mongo
+sudo systemctl start mongod
+
+
+
+
+
+
+-----------------Instrucciones despliegue connectores------------------------------
+*Open kafka cmd: 
+kubectl exec --stdin --tty my-kafka-cluster-kafka-0 -n kafka-cluster  -- /bin/bash
+
+*Crear topic offsets de connector "rss-source-connector" en kafka connect:
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic offsets-topic --partitions 3  --replication-factor 1 --config "cleanup.policy=compact" --config "delete.retention.ms=1000"  --config "segment.ms=1000" --config "min.cleanable.dirty.ratio=0"
+
+*Crear topic en el que "rss-source-connector" vuelca toda la info leída de RSSs:
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic rss-source-topic
+
+ 	
+*Crear connector "rss-source-connector":
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "rss-source-connector", "config": { "connector.class": "SourceRssConnector", "tasks.max": "3","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": true, "topic": "rss-source-topic", "offsets-topic": "offsets-topic",  "kafka-bootstrap": "my-kafka-cluster-kafka-bootstrap.kafka-cluster.svc.cluster.local:9092"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+(Delete connector)
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-source-connector
+
+*Si queremos que este connector empiece a leer algún RSS:
+
+*Crear connector que lee rss-source-topic, crea SourceFeeds y produce eventos de item publicado en Redis a result-item2source-topic
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-feed-builder", "config": { "connector.class": "SourceRedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": true, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "topics": "rss-source-topic", "redis-connection": "source-release-redis-master.redis.svc.cluster.local", "redis-password": "6PfK21DUvK"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-feed-builder
+
+
+*Crear connector que lee result-item2source-topic y crea los composed feeds:
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-composedfeed-builder1", "config": { "connector.class": "ComposedSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": false, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": false, "topics": "result-item2source-topic", "redis-connection": "composed-release-redis-master.redis.svc.cluster.local", "redis-password": "y7nJmYuFxg"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+*Crear connector encargado de procesar las acciones relacionadas con las Sources (hasta ahora la única acción procesable es "newSource", que crea una nueva Source en Redis)
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-source-actions", "config": { "connector.class": "ActionsSourceRedisSinkConnector", "tasks.max": "4","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": false, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": false, "topics": "source-actions-topic", "source-redis-connection": "source-release-redis-master.redis.svc.cluster.local", "source-redis-password": "6PfK21DUvK", "nMapSources":"4"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+*Crear connector encargado de procesar las acciones relacionadas con los Composeds (actualmente las dos acciones que hay son sourceFollowedByComposed y sourceUnFollowedByComposed)
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X POST -H "Content-Type: application/json" --data '{ "name": "redis-composed-actions", "config": { "connector.class": "ActionsComposedRedisSinkConnector", "tasks.max": "1","key.converter": "org.apache.kafka.connect.storage.StringConverter", "key.converter.schemas.enable": false, "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": false, "topics": "composed-followers-topic", "composed-redis-connection": "composed-release-redis-master.redis.svc.cluster.local", "composed-redis-password": "y7nJmYuFxg", "source-redis-connection": "source-release-redis-master.redis.svc.cluster.local", "source-redis-password": "6PfK21DUvK"}}' http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors
+
+*Comprobar los connectors que acabamos de crear
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X GET -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/
+
+** Lista de topics necesarios:
+offsets-topic (rss-source-connector consumidor, redis-source-actions productor) // bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic offsets-topic --partitions 3  --replication-factor 1 --config "cleanup.policy=compact" --config "delete.retention.ms=1000"  --config "segment.ms=1000" --config "min.cleanable.dirty.ratio=0"
+
+rss-source-topic (rss-source-connector productor, redis-feed-builder consumidor)
+
+result-item2source-topic (redis-feed-builder productor, redis-composedfeed-builder1 consumidor)
+
+source-actions-topic (redis-source-actions consumidor) // bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic source-actions-topic  --partitions 4 
+
+composed-followers-topic (redis-composed-actions consumidor)
+
+bin/kafka-console-consumer.sh --topic offsets-topic --from-beginning --bootstrap-server localhost:9092
+
+bin/kafka-console-consumer.sh --topic rss-source-topic --from-beginning --bootstrap-server localhost:9092
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic result-item2source-topic
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic composed-followers-topic
+
+bin/kafka-console-consumer.sh --topic result-item2source-topic --from-beginning --bootstrap-server localhost:9092
+
+bin/kafka-console-consumer.sh --topic source-actions-topic --from-beginning --bootstrap-server localhost:9092
+
+bin/kafka-console-consumer.sh --topic composed-followers-topic --from-beginning --bootstrap-server localhost:9092
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X DELETE -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/redis-source-actions
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic composed-followers-topic
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+docker build . -t coloal/custom_redis:0.99 --no-cache
+docker push coloal/custom_redis:0.99
+
+helm install --set image.repository=coloal/custom_redis --set image.tag=0. --set image.pullPolicy=Always --set image.debug=true composed-release  bitnami/redis -n redis
+
+helm uninstall composed-release -n redis
+MODULE LOAD /opt/bitnami/redis/modules/redisearch.so
+
+ft.create composed-index on hash prefix 1 Composed: schema Name text Description text
+
+composed-release
+
+SET DEBUG=HELLOWORLD:* & npm run devstart
+
+helm install --set image.repository=coloal/custom_redis --set image.tag=0.99 --set image.pullPolicy=Always --set image.debug=true  source-release  bitnami/redis --set master.disableCommands={FLUSHALL} --set slave.disableCommands={FLUSHALL} -n redis
+
+helm install --set image.repository=coloal/custom_redis --set image.tag=0.99 --set image.pullPolicy=Always --set image.debug=true  composed-release  bitnami/redis --set master.disableCommands={FLUSHALL} --set slave.disableCommands={FLUSHALL} -n redis
+
+
+redis-cli -h 127.0.0.1 -p 6380 -a $REDIS_PASSWORD KEYS "*" | grep -v "Item:*"
+
+Para leer en tiempo real el log del Kafka Worker para un connector determinado: 
+
+	kubectl logs -f  pod/my-connect-cluster-connect-846656946-lxxl9 -n kafka-connect | grep  "<nombre_del_connector>"
+
+
+db.users.createIndex( { username: "text" }, { default_language: "english" } )
+
+
+
+#Stop connector
+
+kubectl exec -it pod/connector-manager -n kafka-connect -- curl -X PUT -H "Content-Type: application/json" http://my-connect-cluster-connect-api.kafka-connect.svc.cluster.local:8083/connectors/rss-source-connector/pause
+
+
+
+	kubectl logs -f  pod/my-connect-cluster-connect-846656946-r88mz -n kafka-connect | grep  "redis-composedfeed-builder1"
+

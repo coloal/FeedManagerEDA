@@ -1,0 +1,20 @@
+h2#feedinfo.ui.center.aligned.dividing.header Feed info
+                                        
+div#description.ui.container.segment
+    h4.ui.center.aligned.dividing.header Description:
+    div.ui.list    
+        div.item
+            div.header #{infoFeed.Name}
+            p #{infoFeed.Description}
+
+div#feedfollows.ui.container.segment
+    h4.ui.center.aligned.dividing.header Feed follows:
+    
+    div.ui.list
+        each source in listFollowedSources
+            div.item
+                div.header #{source.Title}
+                p #{source.Description}
+                a(id='Source:#{source.id}').ui.label.stopFollowingSource
+                    i.minus.circle.icon
+                    | stop following

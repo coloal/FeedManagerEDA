@@ -1,0 +1,35 @@
+helm install web-master-data --set architecture=replicaset,replicaCount=1,externalAccess.enabled=true,externalAccess.service.type=NodePort,externalAccess.service.nodePorts[0]=31234 bitnami/mongodb -n mongodb
+------------------------------------------------------------------------------------------------------------------------------------------
+NAME: web-master-data
+LAST DEPLOYED: Sun Apr 25 15:29:42 2021
+NAMESPACE: web
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+
+MongoDB(R) can be accessed on the following DNS name(s) and ports from within your cluster:
+
+    web-master-data-mongodb-0.web-master-data-mongodb-headless.web.svc.cluster.local:27017
+
+To get the root password run:
+
+    export MONGODB_ROOT_PASSWORD=$(kubectl get secret --namespace web web-master-data-mongodb -o jsonpath="{.data.mongodb-root-password}" | base64 --decode)
+
+To connect to your database, create a MongoDB(R) client container:
+
+    kubectl run --namespace web web-master-data-mongodb-client --rm --tty -i --restart='Never' --env="MONGODB_ROOT_PASSWORD=$MONGODB_ROOT_PASSWORD" --image docker.io/bitnami/mongodb:4.4.4-debian-10-r0 --command -- bash
+
+Then, run the following command:
+    mongo admin --host "web-master-data-mongodb-0.web-master-data-mongodb-headless.web.svc.cluster.local:27017" --authenticationDatabase admin -u root -p $MONGODB_ROOT_PASSWORD
+
+To connect to your database nodes from outside, you need to add both primary and secondary nodes hostnames/IPs to your Mongo client. To obtain them, follow the instructions below:
+
+    MongoDB(R) nodes domain: you can reach MongoDB(R) nodes on any of the K8s nodes external IPs.
+
+        kubectl get nodes -o wide
+
+    MongoDB(R) nodes port: You will have a different node port for each MongoDB(R) node. You can get the list of configured node ports using the command below:
+
+        echo "$(kubectl get svc --namespace web -l "app.kubernetes.io/name=mongodb,app.kubernetes.io/instance=web-master-data,app.kubernetes.io/component=mongodb,pod" -o jsonpath='{.items[*].spec.ports[0].nodePort}' | tr ' ' '\n')"

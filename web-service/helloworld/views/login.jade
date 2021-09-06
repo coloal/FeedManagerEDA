@@ -1,0 +1,15 @@
+extends layout
+
+block content
+    h1= title
+    form(name="login", method="POST", action='/users/login')
+        input(type="hidden", name="_method", value="POST")
+        p Name
+        input(type="text", name="username")
+        p Password
+        input(type="text", name="password")
+        p
+        input(type="submit")
+    a(href="/register") Register
+
+    

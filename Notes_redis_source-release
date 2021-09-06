@@ -1,0 +1,35 @@
+NAME: source-release
+LAST DEPLOYED: Sun Aug 22 17:33:24 2021
+NAMESPACE: redis
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+Redis(TM) can be accessed via port 6379 on the following DNS names from within your cluster:
+
+source-release-redis-master.redis.svc.cluster.local for read/write operations
+source-release-redis-slave.redis.svc.cluster.local for read-only operations
+
+
+To get your password run:
+
+    export SOURCE_PASSWORD=$(kubectl get secret --namespace redis source-release-redis -o jsonpath="{.data.redis-password}" | base64 --decode)
+
+To connect to your Redis(TM) server:
+
+1. Run a Redis(TM) pod that you can use as a client:
+   kubectl run --namespace redis source-release-redis-client --rm --tty -i --restart='Never' \
+    --env SOURCE_PASSWORD=$SOURCE_PASSWORD \
+   --image docker.io/coloal/custom_redis:0.99 -- bash
+
+2. Connect using the Redis(TM) CLI:
+   redis-cli -h source-release-redis-master -a $SOURCE_PASSWORD
+   redis-cli -h source-release-redis-slave -a $SOURCE_PASSWORD
+
+To connect to your database from outside the cluster execute the following commands:
+
+    kubectl port-forward --namespace redis svc/source-release-redis-master 6380:6379 &
+    redis-cli -h 127.0.0.1 -p 6380 -a $SOURCE_PASSWORD
+
+ft.create source-index on hash prefix 1 Source: schema Title text Description text Url text link text

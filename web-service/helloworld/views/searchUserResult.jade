@@ -1,0 +1,9 @@
+each user in arrUsers
+    .result
+        .left.floated.content.content(id='#{user.id}')
+            div(id='#{user.id}').title #{user.username}
+            .description user
+        .right.floated.content
+            a.ui.label.addAdmin
+                i.plus.circle.icon
+                | add admin
